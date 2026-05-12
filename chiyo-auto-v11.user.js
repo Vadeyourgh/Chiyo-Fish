@@ -1217,52 +1217,104 @@
     // ── PET-SAFE REBIRTH ──────────────────────────────────────────────────────
     // ══════════════════════════════════════════════════════════════════════════
 
+    // Rebirth steps: 0=not started, 1=opening pets tab, 2=checking/equipping pets, 3=opening rebirth tab, 4=clicking rebirth
+    let rebirthStep = 0;
+    let rebirthStepTime = 0;
+
     function processRebirth(now) {
         if (!toggles.autoRebirth || !rebirthPending) return false;
 
-        // Step 1: Verify pets are equipped
-        if (!petsVerifiedForRebirth) {
+        // Step 0 → 1: Start by opening Pets tab
+        if (rebirthStep === 0) {
             if (toggles.autoPetEquip) {
                 const petsTab = getPetsTab();
                 if (petsTab) {
                     clickTab(petsTab);
-                    setSt('rb: check pets');
+                    setSt('rb: open pets');
                     setLed('hold');
-                    // Check after DOM updates
-                    setTimeout(() => {
-                        if (areBestPetsEquipped()) {
-                            petsVerifiedForRebirth = true;
-                        } else {
-                            equipBestPets();
-                        }
-                    }, 400);
+                    rebirthStep = 1;
+                    rebirthStepTime = now;
                     return true;
                 }
             }
-            petsVerifiedForRebirth = true;
+            // No pet equip needed, skip to rebirth tab
+            rebirthStep = 3;
+            rebirthStepTime = now;
+            return true;
         }
 
-        // Step 2: Open rebirth tab and click rebirth
-        if (petsVerifiedForRebirth) {
+        // Step 1: Wait for Pets tab to render (400ms)
+        if (rebirthStep === 1) {
+            if (now - rebirthStepTime < 400) return true; // wait
+            rebirthStep = 2;
+            rebirthStepTime = now;
+            return true;
+        }
+
+        // Step 2: Check and equip best pets
+        if (rebirthStep === 2) {
+            setSt('rb: equip pets');
+            setLed('hold');
+            if (areBestPetsEquipped()) {
+                // All best pets equipped — proceed to rebirth
+                rebirthStep = 3;
+                rebirthStepTime = now;
+                return true;
+            } else {
+                // Try to equip
+                const acted = equipBestPets();
+                if (acted) {
+                    // Wait a bit for equip to process, then re-check
+                    rebirthStepTime = now;
+                    return true;
+                }
+                // Timeout: if stuck equipping for >10s, proceed anyway
+                if (now - rebirthStepTime > 10000) {
+                    rebirthStep = 3;
+                    rebirthStepTime = now;
+                }
+                return true;
+            }
+        }
+
+        // Step 3: Open Rebirth tab
+        if (rebirthStep === 3) {
             const rebirthTab = getRebirthTab();
             if (rebirthTab) {
                 clickTab(rebirthTab);
-                setSt('rb: rebirth tab');
+                setSt('rb: open rebirth');
                 setLed('rb');
-                setTimeout(() => {
-                    const rebirthBtn = getRebirthBtn();
-                    if (rebirthBtn && !rebirthBtn.disabled) {
-                        clickEl(rebirthBtn);
-                    } else {
-                        // Can't rebirth, cancel
-                        rebirthPending = false;
-                        petsVerifiedForRebirth = false;
-                    }
-                }, 400);
+                rebirthStep = 4;
+                rebirthStepTime = now;
                 return true;
             }
+            // No rebirth tab found, cancel
             rebirthPending = false;
-            petsVerifiedForRebirth = false;
+            rebirthStep = 0;
+            return false;
+        }
+
+        // Step 4: Wait for tab render then click rebirth button
+        if (rebirthStep === 4) {
+            if (now - rebirthStepTime < 400) return true; // wait for render
+
+            const rebirthBtn = getRebirthBtn();
+            if (rebirthBtn && !rebirthBtn.disabled) {
+                setSt('rb: clicking rebirth!');
+                setLed('rb');
+                clickEl(rebirthBtn);
+                // Reset — the confirm popup will be caught by Priority 1
+                rebirthStep = 0;
+                return true;
+            }
+
+            // Button not ready or disabled — cancel after 5s
+            if (now - rebirthStepTime > 5000) {
+                rebirthPending = false;
+                rebirthStep = 0;
+                return false;
+            }
+            return true; // keep waiting
         }
 
         return false;
@@ -1302,6 +1354,7 @@
             addStat('rebirths');
             rebirthPending = false;
             petsVerifiedForRebirth = false;
+            rebirthStep = 0;
             tabRotationPhase = 0;
             currentState = 'fishing';
             // After rebirth, go to items tab briefly
