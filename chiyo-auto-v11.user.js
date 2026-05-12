@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fishin' Chiyo - Auto v11
 // @namespace    http://tampermonkey.net/
-// @version      11.3
+// @version      11.4
 // @description  Auto CAST + Sell + Clean + Boss + Hook Set Fight + Upgrade + Charter + Rebirth + Equip Best Pet — Draggable & Compact GUI
 // @match        https://fishin-chiyo.vercel.app/*
 // @match        *://fishin-chiyo.vercel.app/*
@@ -18,6 +18,7 @@
     const CAST_DELAY = 500;
     const UPGRADE_DELAY = 300;
     const SELL_COOLDOWN = 2000;
+    const UPGRADE_CHECK_INTERVAL = 60000; // check upgrade tab every 1 minute
 
     let running = false;
     let loop = null;
@@ -36,6 +37,7 @@
     let lastCastTime = 0;
     let lastUpgradeTime = 0;
     let lastSellTime = 0;
+    let lastUpgradeTabCheck = 0;
 
     let itemLimits = JSON.parse(localStorage.getItem('chiyo_limits') || '{}');
     let itemEnabled = JSON.parse(localStorage.getItem('chiyo_enabled') || '{}');
@@ -1065,6 +1067,17 @@
             if (tryAutoEquipBestPets()) return;
         }
 
+        // PRIORITY 3.9: Periodically switch to Upgrade tab (every 1 min)
+        if (now - lastUpgradeTabCheck > UPGRADE_CHECK_INTERVAL) {
+            lastUpgradeTabCheck = now;
+            const activeTab = document.querySelector('button.tab.active');
+            if (!activeTab || !/^upgrade$/i.test(activeTab.textContent.trim())) {
+                openUpgradeTab();
+                setSt('check upgrades');
+                return;
+            }
+        }
+
         // PRIORITY 4: Auto Upgrade
         if (tryUpgrade()) return;
 
@@ -1137,5 +1150,5 @@
     });
 
     renderUpgradeList();
-    console.log('[ChiyoMacro v11.3] Ready — drag to move, click ◼ to compact. Auto-equip best pets + pet-safe rebirth enabled. START or F8.');
+    console.log('[ChiyoMacro v11.4] Ready — drag to move, click ◼ to compact. Auto-equip best pets + pet-safe rebirth + upgrade check enabled. START or F8.');
 })();
