@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fishin' Chiyo - Auto v11
 // @namespace    http://tampermonkey.net/
-// @version      11.2
+// @version      11.3
 // @description  Auto CAST + Sell + Clean + Boss + Hook Set Fight + Upgrade + Charter + Rebirth + Equip Best Pet — Draggable & Compact GUI
 // @match        https://fishin-chiyo.vercel.app/*
 // @match        *://fishin-chiyo.vercel.app/*
@@ -961,15 +961,7 @@
             return;
         }
 
-        // PRIORITY 2: CLEAN/REPAIR HOOK button
-        const cleanBtn = document.querySelector('button.cast-btn.cast-mode-clean') ||
-            document.querySelector('button.cast-btn.cast-mode-repair');
-        if (cleanBtn) {
-            setLed('wait');
-            setSt('clean hook');
-            if (now - lastClickTime > START_DELAY) { lastClickTime = now; clickEl(cleanBtn); }
-            return;
-        }
+
 
         // PRIORITY 3: Auto Charter — tab water logic
         if (waterTabOpen) {
@@ -1076,18 +1068,36 @@
         // PRIORITY 4: Auto Upgrade
         if (tryUpgrade()) return;
 
-        // PRIORITY 5: CAST
-        const castBtn =
-            document.querySelector('button.cast-btn:not(.cast-mode-clean)') ||
-            [...document.querySelectorAll('button')].find(b => !b.closest('#chiyoWrap') && /^CAST!?$/i.test(b.textContent.trim()));
-
-        if (castBtn) {
-            setLed('cast');
-            setSt('cast');
-            if (now - lastCastTime > CAST_DELAY) {
-                lastCastTime = now;
-                clickEl(castBtn);
-                addCast();
+        // PRIORITY 5: CAST (handles CAST / REPAIR / CLEAN via single cast-btn)
+        const castBtn = document.querySelector('button.cast-btn');
+        if (castBtn && !castBtn.disabled && castBtn.offsetParent) {
+            const castTxt = castBtn.textContent.trim().toUpperCase();
+            
+            if (castTxt.includes('REPAIR')) {
+                // Auto repair hook
+                setLed('wait');
+                setSt('repair');
+                if (now - lastClickTime > START_DELAY) {
+                    lastClickTime = now;
+                    clickEl(castBtn);
+                }
+            } else if (castTxt.includes('CLEAN')) {
+                // Trigger cleaning minigame
+                setLed('wait');
+                setSt('clean hook');
+                if (now - lastClickTime > START_DELAY) {
+                    lastClickTime = now;
+                    clickEl(castBtn);
+                }
+            } else {
+                // Normal CAST
+                setLed('cast');
+                setSt('cast');
+                if (now - lastCastTime > CAST_DELAY) {
+                    lastCastTime = now;
+                    clickEl(castBtn);
+                    addCast();
+                }
             }
             return;
         }
@@ -1127,5 +1137,5 @@
     });
 
     renderUpgradeList();
-    console.log('[ChiyoMacro v11.2] Ready — drag to move, click ◼ to compact. Auto-equip best pets + pet-safe rebirth enabled. START or F8.');
+    console.log('[ChiyoMacro v11.3] Ready — drag to move, click ◼ to compact. Auto-equip best pets + pet-safe rebirth enabled. START or F8.');
 })();
