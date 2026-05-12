@@ -914,6 +914,11 @@
             }
         }
         selectBestLocation();
+        // Always trigger rebirth check after waters phase
+        if (toggles.autoRebirth && !rebirthPending) {
+            rebirthPending = true;
+            petsVerifiedForRebirth = false;
+        }
     }
 
 
@@ -1352,7 +1357,14 @@
         }
 
         // ────────────────────────────────────────────────────────────────────
-        // PRIORITY 6: Tab rotation cycle (every tabRotationInterval)
+        // PRIORITY 6: Pet-Safe Rebirth (HIGHEST tab priority — blocks rotation)
+        // ────────────────────────────────────────────────────────────────────
+        if (rebirthPending) {
+            if (processRebirth(now)) return;
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // PRIORITY 7: Tab rotation cycle (every tabRotationInterval)
         // ────────────────────────────────────────────────────────────────────
         if (tabRotationPhase !== 0) {
             // Currently in a tab rotation — process it
@@ -1362,11 +1374,6 @@
             startTabRotation();
             if (processTabRotation(now)) return;
         }
-
-        // ────────────────────────────────────────────────────────────────────
-        // PRIORITY 7: Pet-Safe Rebirth (only after charter, with pet verify)
-        // ────────────────────────────────────────────────────────────────────
-        if (processRebirth(now)) return;
 
         // ────────────────────────────────────────────────────────────────────
         // PRIORITY 8: Auto Upgrade (runs every scan if Upgrade tab is active)
