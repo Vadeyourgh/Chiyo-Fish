@@ -1369,7 +1369,17 @@
         if (processRebirth(now)) return;
 
         // ────────────────────────────────────────────────────────────────────
-        // PRIORITY 8: Cast / Repair / Clean via cast-btn
+        // PRIORITY 8: Auto Upgrade (runs every scan if Upgrade tab is active)
+        // ────────────────────────────────────────────────────────────────────
+        if (toggles.autoUpgrade) {
+            const activeTab = document.querySelector('button.tab.active');
+            if (activeTab && /^upgrade$/i.test(activeTab.textContent.trim())) {
+                if (tryUpgrade()) return;
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // PRIORITY 9: Cast / Repair / Clean via cast-btn
         // ────────────────────────────────────────────────────────────────────
         const castBtn = document.querySelector('button.cast-btn');
         if (castBtn && !castBtn.disabled && castBtn.offsetParent) {
