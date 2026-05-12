@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Fishin' Chiyo - Auto v11
 // @namespace    http://tampermonkey.net/
-// @version      11.1
+// @version      11.2
 // @description  Auto CAST + Sell + Clean + Boss + Hook Set Fight + Upgrade + Charter + Rebirth + Equip Best Pet — Draggable & Compact GUI
 // @match        https://fishin-chiyo.vercel.app/*
 // @match        *://fishin-chiyo.vercel.app/*
@@ -617,6 +617,8 @@
     let waterOpenedAt   = 0;
     let rebirthTabOpen  = false;
     let itemsTabOpen    = false;
+    let rebirthPending  = false;
+    let petsVerifiedForRebirth = false;
 
     function parseKNum(s) {
         s = s.replace(/,/g, '').trim();
@@ -677,16 +679,38 @@
     }
 
     function autoUseItems() {
+        // Step 1: Click all BUY MAX buttons where count > 0
+        const buyMaxBtns = [...document.querySelectorAll('div.upgrade.item-card.active button.buy.use')].filter(b => {
+            if (b.disabled) return false;
+            const txt = b.textContent.trim().toUpperCase();
+            if (!txt.startsWith('BUY MAX')) return false;
+            const count = parseInt(txt.replace(/[^\d]/g, '')) || 0;
+            return count > 0;
+        });
+        buyMaxBtns.forEach(b => clickEl(b));
+
+        // Step 2: Click all STACK buttons where count > 0
+        const stackBtns = [...document.querySelectorAll('div.upgrade.item-card.active button.buy.use')].filter(b => {
+            if (b.disabled) return false;
+            const txt = b.textContent.trim().toUpperCase();
+            if (!txt.startsWith('STACK')) return false;
+            const count = parseInt(txt.replace(/[^\d]/g, '')) || 0;
+            return count > 0;
+        });
+        stackBtns.forEach(b => clickEl(b));
+
+        // Step 3: Click all USE ALL / USE buttons where count > 0
         const useBtns = [...document.querySelectorAll('button.buy.use')].filter(b => {
             if (b.disabled) return false;
-            const spans = b.querySelectorAll('span');
-            const label = spans[0]?.textContent?.trim().toUpperCase();
-            if (label !== 'USE' && label !== 'USE ALL') return false;
-            const count = parseInt(spans[spans.length-1]?.textContent?.replace(/[^\d]/g,'')) || 0;
+            const txt = b.textContent.trim().toUpperCase();
+            if (!txt.startsWith('USE ALL') && !txt.startsWith('USE')) return false;
+            if (txt.startsWith('BUY') || txt.startsWith('STACK')) return false;
+            const count = parseInt(txt.replace(/[^\d]/g, '')) || 0;
             return count > 0;
         });
         useBtns.forEach(b => clickEl(b));
-        return useBtns.length;
+
+        return buyMaxBtns.length + stackBtns.length + useBtns.length;
     }
 
 
@@ -800,6 +824,60 @@
         return false;
     }
 
+    // ── PET-SAFE REBIRTH HELPERS ─────────────────────────────────────────────
+    function areBestPetsEquipped() {
+        const slots = getCompanionSlots();
+        const pets  = getOwnedPetCards();
+        if (pets.length === 0) return true; // no pets = nothing to equip
+
+        // Sort by rank (rarity) desc, then level desc
+        pets.sort((a, b) => {
+            if (b.rank !== a.rank) return b.rank - a.rank;
+            return b.level - a.level;
+        });
+
+        const bestPets = pets.slice(0, slots.max);
+        return bestPets.every(pet => pet.isEquipped);
+    }
+
+    function ensureBestPetsEquipped() {
+        // Returns true if an action was taken (need to wait), false if already good
+        const slots = getCompanionSlots();
+        const pets  = getOwnedPetCards();
+        if (pets.length === 0) return false;
+
+        // Sort by rank (rarity) desc, then level desc
+        pets.sort((a, b) => {
+            if (b.rank !== a.rank) return b.rank - a.rank;
+            return b.level - a.level;
+        });
+
+        const bestPets  = pets.slice(0, slots.max);
+        const otherPets = pets.slice(slots.max);
+
+        // First: unequip any pet that shouldn't be equipped
+        for (const pet of otherPets) {
+            if (pet.isEquipped && pet.equipBtn) {
+                setSt(`rb: unequip ${pet.name}`);
+                clickEl(pet.equipBtn);
+                addPetEquip();
+                return true;
+            }
+        }
+
+        // Then: equip best pets that aren't equipped yet
+        for (const pet of bestPets) {
+            if (!pet.isEquipped && pet.equipBtn) {
+                setSt(`rb: equip ${pet.name}`);
+                clickEl(pet.equipBtn);
+                addPetEquip();
+                return true;
+            }
+        }
+
+        return false; // all best pets already equipped
+    }
+
     // ── MAIN SCAN ─────────────────────────────────────────────────────────────
     function scan() {
         if (!running) return;
@@ -824,6 +902,8 @@
             clickEl(confirmBtn);
             addRebirth();
             rebirthTabOpen = false;
+            rebirthPending = false;
+            petsVerifiedForRebirth = false;
             setTimeout(() => openItemsTab(), 1500);
             return;
         }
@@ -902,7 +982,9 @@
                     addCharter();
                     waterTabOpen = false;
                     lastWaterCheck = now;
-                    setTimeout(() => { selectBestLocation(); openRebirthTab(); }, 1000);
+                    rebirthPending = true;
+                    petsVerifiedForRebirth = false;
+                    setTimeout(() => openPetsTab(), 1000);
                     return;
                 } else {
                     setSt('wait charter');
@@ -911,7 +993,9 @@
                 selectBestLocation();
                 waterTabOpen  = false;
                 lastWaterCheck = now;
-                openRebirthTab();
+                rebirthPending = true;
+                petsVerifiedForRebirth = false;
+                setTimeout(() => openPetsTab(), 500);
                 return;
             }
         }
@@ -924,16 +1008,52 @@
             return;
         }
 
-        // PRIORITY 3.5: Auto Rebirth
+        // PRIORITY 3.5: Pet-Safe Rebirth Flow
+        if (rebirthPending && !petsVerifiedForRebirth) {
+            // Check if pets tab is active
+            const petsTabActive = document.querySelector('button.tab.active');
+            if (petsTabActive && /^pets$/i.test(petsTabActive.textContent.trim())) {
+                // Pets tab is open — verify/equip best pets
+                if (areBestPetsEquipped()) {
+                    petsVerifiedForRebirth = true;
+                    openRebirthTab();
+                    setSt('pets OK → rebirth');
+                    return;
+                } else {
+                    // Equip best pets, retry next cycle
+                    const acted = ensureBestPetsEquipped();
+                    if (acted) {
+                        setLed('hold');
+                        setSt('equipping for rebirth');
+                        return;
+                    } else {
+                        // Edge case: couldn't act but not equipped — proceed anyway
+                        petsVerifiedForRebirth = true;
+                        openRebirthTab();
+                        return;
+                    }
+                }
+            } else {
+                // Pets tab not open yet, open it
+                openPetsTab();
+                setSt('pets check for rebirth');
+                return;
+            }
+        }
+
         if (rebirthTabOpen) {
             const rebirthBtn = getRebirthBtn();
             if (rebirthBtn && !rebirthBtn.disabled) {
                 setLed('rb');
                 setSt('rebirth…');
                 clickEl(rebirthBtn);
+                rebirthPending = false;
+                petsVerifiedForRebirth = false;
                 return;
             } else {
                 rebirthTabOpen = false;
+                rebirthPending = false;
+                petsVerifiedForRebirth = false;
                 openItemsTab();
                 return;
             }
@@ -1007,5 +1127,5 @@
     });
 
     renderUpgradeList();
-    console.log('[ChiyoMacro v11.1] Ready — drag to move, click ◼ to compact. Auto-equip best pets enabled. START or F8.');
+    console.log('[ChiyoMacro v11.2] Ready — drag to move, click ◼ to compact. Auto-equip best pets + pet-safe rebirth enabled. START or F8.');
 })();
