@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Fishin' Chiyo - Auto v11
 // @namespace    http://tampermonkey.net/
-// @version      11.0
-// @description  Auto CAST + Sell + Clean + Boss + Hook Set Fight + Upgrade + Charter + Rebirth — Draggable & Compact GUI
+// @version      11.1
+// @description  Auto CAST + Sell + Clean + Boss + Hook Set Fight + Upgrade + Charter + Rebirth + Equip Best Pet — Draggable & Compact GUI
 // @match        https://fishin-chiyo.vercel.app/*
 // @match        *://fishin-chiyo.vercel.app/*
 // @grant        none
@@ -31,6 +31,7 @@
     let reelHits = 0;
     let holdStarts = 0;
     let rebirths = 0;
+    let petEquips = 0;
     let lastClickTime = 0;
     let lastCastTime = 0;
     let lastUpgradeTime = 0;
@@ -181,6 +182,7 @@
                 <span class="dim">U:</span><span class="cnt" id="cUpg">0</span>
                 <span class="dim">R:</span><span class="cnt" id="cRebirth">0</span>
                 <span class="dim">Ch:</span><span class="cnt" id="cCharters">0</span>
+                <span class="dim">P:</span><span class="cnt" id="cPets">0</span>
             </div>
         </div>
         <div id="chiyoUpgradePanel">
@@ -250,6 +252,7 @@
     const reelEl = document.getElementById('cReel');
     const holdEl = document.getElementById('cHold');
     const rebirthEl = document.getElementById('cRebirth');
+    const petEquipEl = document.getElementById('cPets');
     const stEl = document.getElementById('cSt');
     const upPanel = document.getElementById('chiyoUpgradePanel');
     const upList = document.getElementById('upItemList');
@@ -267,6 +270,7 @@
     function addReel() { reelHits++; reelEl.textContent = reelHits; }
     function addHold() { holdStarts++; holdEl.textContent = holdStarts; }
     function addRebirth(){ rebirths++; rebirthEl.textContent = rebirths; }
+    function addPetEquip(){ petEquips++; petEquipEl.textContent = petEquips; }
 
     // ── COMPACT TOGGLE ────────────────────────────────────────────────────────
     const compactBtn = document.getElementById('cCompactBtn');
@@ -686,6 +690,116 @@
     }
 
 
+    // ── AUTO EQUIP BEST PET ──────────────────────────────────────────────────
+    const PET_EQUIP_INTERVAL = 60000; // check every 60s
+    let lastPetEquipCheck = 0;
+    let petTabOpen = false;
+
+    const RARITY_RANK = { common: 1, uncommon: 2, rare: 3, epic: 4, legendary: 5, mythic: 6 };
+
+    function getPetsTab() {
+        return [...document.querySelectorAll('button.tab, button[class*="tab"]')].find(el =>
+            !el.closest('#chiyoWrap') && /^pets$/i.test(el.textContent.trim())
+        );
+    }
+
+    function openPetsTab() {
+        const t = getPetsTab();
+        if (t) { clickEl(t); petTabOpen = true; }
+    }
+
+    function getCompanionSlots() {
+        const metrics = document.querySelector('.hatchery-metrics');
+        if (!metrics) return { current: 0, max: 1 };
+        const m = metrics.textContent.match(/Companions\s*(\d+)\s*\/\s*(\d+)/i);
+        if (!m) return { current: 0, max: 1 };
+        return { current: parseInt(m[1]), max: parseInt(m[2]) };
+    }
+
+    function getOwnedPetCards() {
+        // Get all pet-cards that are NOT locked (= owned)
+        return [...document.querySelectorAll('.pet-card:not(.locked)')].map(card => {
+            const nameEl   = card.querySelector('.pet-name');
+            const rarityEl = card.querySelector('.pet-rarity');
+            const levelEl  = card.querySelector('.pet-level');
+            if (!nameEl || !rarityEl || !levelEl) return null;
+
+            const name    = nameEl.textContent.trim();
+            const rarity  = rarityEl.textContent.trim().toLowerCase();
+            const lvMatch = levelEl.textContent.match(/Lv\s*(\d+)/i);
+            const level   = lvMatch ? parseInt(lvMatch[1]) : 0;
+            const isEquipped = card.classList.contains('equipped');
+
+            // Find EQUIP / UNEQUIP button inside card
+            const equipBtn = [...card.querySelectorAll('button')].find(b => {
+                const t = b.textContent.trim().toUpperCase();
+                return t === 'EQUIP' || t === 'UNEQUIP';
+            });
+
+            return { name, rarity, level, rank: RARITY_RANK[rarity] || 0, isEquipped, equipBtn, card };
+        }).filter(Boolean);
+    }
+
+    function tryAutoEquipBestPets() {
+        const now = Date.now();
+        if (now - lastPetEquipCheck < PET_EQUIP_INTERVAL) return false;
+        lastPetEquipCheck = now;
+
+        // If pets tab is not open, open it and return (will process next cycle)
+        const petsTabActive = document.querySelector('button.tab.active');
+        if (!petsTabActive || !/^pets$/i.test(petsTabActive.textContent.trim())) {
+            openPetsTab();
+            setSt('check pets');
+            return true;
+        }
+
+        const slots = getCompanionSlots();
+        const pets  = getOwnedPetCards();
+
+        if (pets.length === 0) {
+            petTabOpen = false;
+            openUpgradeTab();
+            return false;
+        }
+
+        // Sort by rank (rarity) desc, then level desc
+        pets.sort((a, b) => {
+            if (b.rank !== a.rank) return b.rank - a.rank;
+            return b.level - a.level;
+        });
+
+        // Best N pets should be equipped
+        const bestPets   = pets.slice(0, slots.max);
+        const otherPets  = pets.slice(slots.max);
+
+        // First: unequip any pet that shouldn't be equipped
+        for (const pet of otherPets) {
+            if (pet.isEquipped && pet.equipBtn) {
+                setSt(`unequip ${pet.name}`);
+                clickEl(pet.equipBtn);
+                addPetEquip();
+                petTabOpen = false;
+                return true;
+            }
+        }
+
+        // Then: equip best pets that aren't equipped yet
+        for (const pet of bestPets) {
+            if (!pet.isEquipped && pet.equipBtn) {
+                setSt(`equip ${pet.name}`);
+                clickEl(pet.equipBtn);
+                addPetEquip();
+                petTabOpen = false;
+                return true;
+            }
+        }
+
+        // All good — go back to upgrade tab
+        petTabOpen = false;
+        openUpgradeTab();
+        return false;
+    }
+
     // ── MAIN SCAN ─────────────────────────────────────────────────────────────
     function scan() {
         if (!running) return;
@@ -767,8 +881,9 @@
             return;
         }
 
-        // PRIORITY 2: CLEAN HOOK button
-        const cleanBtn = document.querySelector('button.cast-btn.cast-mode-clean');
+        // PRIORITY 2: CLEAN/REPAIR HOOK button
+        const cleanBtn = document.querySelector('button.cast-btn.cast-mode-clean') ||
+            document.querySelector('button.cast-btn.cast-mode-repair');
         if (cleanBtn) {
             setLed('wait');
             setSt('clean hook');
@@ -833,6 +948,11 @@
             return;
         }
 
+        // PRIORITY 3.8: Auto Equip Best Pet
+        if (petTabOpen || (now - lastPetEquipCheck > PET_EQUIP_INTERVAL)) {
+            if (tryAutoEquipBestPets()) return;
+        }
+
         // PRIORITY 4: Auto Upgrade
         if (tryUpgrade()) return;
 
@@ -887,5 +1007,5 @@
     });
 
     renderUpgradeList();
-    console.log('[ChiyoMacro v11] Ready — drag to move, click ◼ to compact. START or F8.');
+    console.log('[ChiyoMacro v11.1] Ready — drag to move, click ◼ to compact. Auto-equip best pets enabled. START or F8.');
 })();
